@@ -1,8 +1,6 @@
 package io.github.froyder.websocketmanager
 
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -18,14 +16,14 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlin.math.pow
 import kotlin.time.Duration.Companion.milliseconds
 
 @Singleton
 class WebSocketManager @Inject constructor(
-    private val okHttpClient: OkHttpClient
+    private val okHttpClient: OkHttpClient,
+    private val config: ReconnectConfig,
+    private val scope: CoroutineScope
 ) {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private var webSocket: WebSocket? = null
     private var reconnectAttempt = 0
@@ -102,13 +100,18 @@ class WebSocketManager @Inject constructor(
         }
     }
 
-    private fun scheduleReconnect() {
+    internal fun scheduleReconnect() {
         reconnectAttempt++
-        val delaySeconds = minOf(2f.pow(reconnectAttempt - 1).toLong(), 30L)
+        if (reconnectAttempt > config.maxAttempts) {
+            _state.value = MarketState.Error("Max reconnection attempts (${config.maxAttempts}) reached")
+            return
+        }
+
+        val delayMs = calculateReconnectDelay(reconnectAttempt, config)
         _state.value = MarketState.Reconnecting(reconnectAttempt)
 
         scope.launch {
-            delay((delaySeconds * 1000).milliseconds)
+            delay(delayMs.milliseconds)
             if (!isIntentionalDisconnect) openSocket()
         }
     }
